@@ -6,8 +6,11 @@ import { QuizView } from '@/components/QuizView';
 import { ConversationSimulator } from '@/components/ConversationSimulator';
 import { TranslationExercise } from '@/components/TranslationExercise';
 import { DailyRoutineView } from '@/components/DailyRoutineView';
+import { AuthModal } from '@/components/AuthModal';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import { useAuth } from '@/hooks/useAuth';
+import { useUserProgress } from '@/hooks/useUserProgress';
 import { 
   BookOpen, 
   MessageSquare, 
@@ -15,7 +18,10 @@ import {
   Calendar,
   ChevronLeft,
   GraduationCap,
-  Sparkles
+  Sparkles,
+  LogIn,
+  LogOut,
+  Loader2
 } from 'lucide-react';
 
 type View = 'home' | 'week' | 'lesson' | 'quiz' | 'conversation' | 'translation' | 'routine';
@@ -24,20 +30,22 @@ export default function Index() {
   const [currentView, setCurrentView] = useState<View>('home');
   const [selectedWeek, setSelectedWeek] = useState(0);
   const [selectedLesson, setSelectedLesson] = useState(0);
-  const [streak, setStreak] = useState(3);
-  const [completedLessons, setCompletedLessons] = useState<string[]>([]);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+
+  const { user, loading: authLoading, signUp, signIn, signOut } = useAuth();
+  const { progress, loading: progressLoading, completeLesson, saveQuizScore } = useUserProgress(user);
 
   const currentWeek = weeks[selectedWeek];
   const currentLesson = currentWeek?.lessons[selectedLesson];
 
   const getWeekProgress = (weekIndex: number) => {
     const week = weeks[weekIndex];
-    const completed = week.lessons.filter(l => completedLessons.includes(l.id)).length;
+    const completed = week.lessons.filter(l => progress.completedLessons.includes(l.id)).length;
     return Math.round((completed / week.lessons.length) * 100);
   };
 
   const totalProgress = Math.round(
-    (completedLessons.length / weeks.reduce((acc, w) => acc + w.lessons.length, 0)) * 100
+    (progress.completedLessons.length / weeks.reduce((acc, w) => acc + w.lessons.length, 0)) * 100
   );
 
   const handleBack = () => {
@@ -48,15 +56,17 @@ export default function Index() {
     }
   };
 
-  const handleCompleteLesson = () => {
-    if (currentLesson && !completedLessons.includes(currentLesson.id)) {
-      setCompletedLessons(prev => [...prev, currentLesson.id]);
+  const handleCompleteLesson = async () => {
+    if (currentLesson) {
+      await completeLesson(currentLesson.id);
     }
     setCurrentView('week');
   };
 
-  const handleQuizComplete = (score: number) => {
-    console.log('Quiz completed with score:', score);
+  const handleQuizComplete = async (score: number) => {
+    if (currentLesson) {
+      await saveQuizScore(currentLesson.id, score, currentLesson.quiz.length);
+    }
   };
 
   const navItems = [
@@ -65,6 +75,14 @@ export default function Index() {
     { id: 'translation' as View, icon: Languages, label: 'Traducir' },
     { id: 'routine' as View, icon: Calendar, label: 'Rutina' },
   ];
+
+  if (authLoading || progressLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -88,9 +106,21 @@ export default function Index() {
                 </div>
               </div>
             )}
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-accent" />
-              <span className="font-bold text-foreground">{streak}🔥</span>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-accent" />
+                <span className="font-bold text-foreground">{progress.streak}🔥</span>
+              </div>
+              {user ? (
+                <Button variant="ghost" size="sm" onClick={() => signOut()}>
+                  <LogOut className="w-4 h-4" />
+                </Button>
+              ) : (
+                <Button variant="outline" size="sm" onClick={() => setShowAuthModal(true)}>
+                  <LogIn className="w-4 h-4 mr-1" />
+                  Entrar
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -100,6 +130,17 @@ export default function Index() {
       <main className="max-w-2xl mx-auto px-4 py-6 pb-24">
         {currentView === 'home' && (
           <div className="space-y-6 animate-slide-up">
+            {/* Login prompt for guests */}
+            {!user && (
+              <div className="p-4 rounded-xl bg-primary/10 border border-primary/20">
+                <p className="text-sm text-foreground">
+                  💡 <button onClick={() => setShowAuthModal(true)} className="font-semibold text-primary hover:underline">
+                    Inicia sesión
+                  </button> para guardar tu progreso y mantener tu racha.
+                </p>
+              </div>
+            )}
+
             {/* Progress Overview */}
             <div className="p-5 rounded-2xl gradient-card shadow-card border border-border">
               <div className="flex items-center justify-between mb-3">
@@ -108,7 +149,7 @@ export default function Index() {
               </div>
               <Progress value={totalProgress} className="h-3" />
               <p className="text-sm text-muted-foreground mt-2">
-                {completedLessons.length} lecciones completadas de {weeks.reduce((acc, w) => acc + w.lessons.length, 0)}
+                {progress.completedLessons.length} lecciones completadas de {weeks.reduce((acc, w) => acc + w.lessons.length, 0)}
               </p>
             </div>
 
@@ -119,7 +160,7 @@ export default function Index() {
                 <WeekCard
                   key={week.weekNumber}
                   week={week}
-                  isActive={index === 0 && completedLessons.length === 0}
+                  isActive={index === 0 && progress.completedLessons.length === 0}
                   isCompleted={getWeekProgress(index) === 100}
                   isLocked={index > 0 && getWeekProgress(index - 1) < 50}
                   progress={getWeekProgress(index)}
@@ -147,7 +188,7 @@ export default function Index() {
             <div className="space-y-3">
               <h3 className="font-semibold text-foreground">Lecciones de esta semana</h3>
               {currentWeek.lessons.map((lesson, index) => {
-                const isCompleted = completedLessons.includes(lesson.id);
+                const isCompleted = progress.completedLessons.includes(lesson.id);
                 return (
                   <button
                     key={lesson.id}
@@ -210,7 +251,7 @@ export default function Index() {
 
         {currentView === 'conversation' && <ConversationSimulator />}
         {currentView === 'translation' && <TranslationExercise />}
-        {currentView === 'routine' && <DailyRoutineView streak={streak} />}
+        {currentView === 'routine' && <DailyRoutineView streak={progress.streak} />}
       </main>
 
       {/* Bottom Navigation */}
@@ -245,6 +286,14 @@ export default function Index() {
           </div>
         </div>
       </nav>
+
+      {/* Auth Modal */}
+      <AuthModal
+        open={showAuthModal}
+        onOpenChange={setShowAuthModal}
+        onSignUp={signUp}
+        onSignIn={signIn}
+      />
     </div>
   );
 }
